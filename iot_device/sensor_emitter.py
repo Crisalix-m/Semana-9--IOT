@@ -22,7 +22,9 @@ def enviar_telemetria():
         headers = {
             "Authorization": f"Bearer {TOKEN}"
         }
-        
+        if valor > 70.0:
+            print(f"[ALERTA] Umbral de inundación superado: {valor} cm")
+
         try:
             response = requests.post(API_URL, json=payload, headers=headers)
             if response.status_code == 200:
@@ -31,9 +33,14 @@ def enviar_telemetria():
                 print(f"[ERROR] Código: {response.status_code}")
         except Exception as e:
             print(f"[CRÍTICO] No hay conexión con el servidor: {e}")
-            
-        # Esperar 5 segundos para la siguiente lectura
-        time.sleep(5)
+
+        #/se borró el time.sleep(5) para más dinamismo y se agregó lógica de espera variable   
+        if valor > 70.0:
+            print("[INFO] Modo de Emergencia activado. Próxima lectura en 2 segundos.")
+            time.sleep(2) # Espera 2 segundos si hay alerta 
+        else:
+            print("[INFO] Estado normal. Próxima lectura en 10 segundos.")
+            time.sleep(10) # Espera 10 segundos si todo está bien
 
 if __name__ == "__main__":
     enviar_telemetria()
