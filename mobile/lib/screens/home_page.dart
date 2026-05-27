@@ -127,57 +127,106 @@ class _HomePageState extends State<HomePage> {
               itemBuilder: (context, index) {
                 final estacion = estaciones[index];
                 
-                // ==========================================
-                // PASO 2: SWIPE-TO-DISMISS (DESLIZAR PARA BORRAR)
-                // ==========================================
-                return Dismissible(
-                  key: Key(estacion.id.toString()),
-                  direction: DismissDirection.endToStart, // Desliza de derecha a izquierda
-                  background: Container(
-                    color: Colors.red,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 20),
-                    child: const Icon(Icons.delete, color: Colors.white),
-                  ),
-                  onDismissed: (direction) async {
-                    // Guarda el nombre antes de borrarlo de la lista para el SnackBar
-                    final nombreEstacion = estacion.nombre;
-                    
-                    // Ejecuta la eliminación en el Backend mediante tu ApiService
-                    bool ok = await apiService.eliminarEstacion(estacion.id);
-                    
-                    if (ok) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text("$nombreEstacion eliminada")),
-                      );
-                    } else {
-                      // Si falla por seguridad en el backend, recargamos para restaurarla visualmente
-                      _refreshEstaciones();
-                    }
-                  },
-                  // ==========================================
-                  // RETO DE LA FASE MOBILE: LÓGICA DE COLORES EN EL LEADING
-                  // ==========================================
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      // Supongamos que tu modelo tiene 'lectura' o 'ultimaLectura'. 
-                      // Si arroja error por el nombre del campo, cámbialo por como se llame en tu modelo.
-                      backgroundColor: (estacion.ultimaLectura ?? 0) > 50 
-                          ? Colors.red       // Rojo si supera el umbral crítico (> 50)
-                          : Colors.green,    // Verde si el valor es normal (< 50)
-                      child: Icon(
-                        (estacion.ultimaLectura ?? 0) > 50 
-                            ? Icons.warning_amber_rounded 
-                            : Icons.check,
-                        color: Colors.white,
+                // Usamos un FutureBuilder secundario para obtener las lecturas en tiempo real de esta estación
+                return FutureBuilder<List<dynamic>>(
+                   future: apiService.fetchLecturas(), // <--- Llama a la función que acabamos de agregar arriba
+                   builder: (context, lecturaSnapshot) {
+                    String valorTexto = "0.0 cm";
+                     bool esCritico = false;
+
+                     if (lecturaSnapshot.hasData && lecturaSnapshot.data!.isNotEmpty) {
+                          // FILTRADO INTELIGENTE: Buscamos las lecturas que correspondan a ESTA estación
+                       final lecturasDeEstaEstacion = lecturaSnapshot.data!
+                          .where((l) => l['estacion_id'] == estacion.id)
+                          .toList();
+
+                        if (lecturasDeEstaEstacion.isNotEmpty) {
+                          // Tomamos el último valor (la telemetría más reciente del script de Python)
+                          final ultimaLectura = lecturasDeEstaEstacion.last;
+                          final double valor = double.tryParse(ultimaLectura['valor'].toString()) ?? 0.0;
+        
+                            valorTexto = "${valor.toStringAsFixed(1)} cm";
+        
+                            // VALIDACIÓN DEL RETO: ¿El nivel del río supera los 70.0 cm?
+                             if (valor > 70.0) {
+                              esCritico = true;
+                            }
+                          }
+                       }
+                    // ==========================================
+                    // PASO 2: SWIPE-TO-DISMISS (DESLIZAR PARA BORRAR)
+                    // ==========================================
+                    return Dismissible(
+                      key: Key(estacion.id.toString()),
+                      direction: DismissDirection.endToStart, // Desliza de derecha a izquierda
+                      background: Container(
+                        color: Colors.red,
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        child: const Icon(Icons.delete, color: Colors.white),
                       ),
-                    ),
-                    title: Text(estacion.nombre),
-                    subtitle: Text(estacion.ubicacion),
-                    // AL TOCAR: Se abre el cuadro de edición creado arriba
-                    onTap: () => _mostrarDialogoEdicion(estacion),
-                  ),
+                      onDismissed: (direction) async {
+                        final nombreEstacion = estacion.nombre;
+                        bool ok = await apiService.eliminarEstacion(estacion.id);
+                        
+                        if (ok) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text("$nombreEstacion eliminada")),
+                          );
+                        } else {
+                          _refreshEstaciones();
+                        }
+                      },
+                      child: Card(
+                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                        // RETO SEMANA 9: Si hay peligro, la tarjeta se vuelve de un tono rojo suave
+                        color: esCritico ? Colors.red.shade50 : Colors.white,
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          leading: CircleAvatar(
+                            // RETO SEMANA 9: El círculo cambia a rojo e icono de advertencia ante emergencias
+                            backgroundColor: esCritico ? Colors.red.shade100 : Colors.green.shade100,
+                            child: Icon(
+                              Icons.wifi_tethering, // Icono de señal inalámbrica ((.))
+                              color: esCritico ? Colors.red : Colors.green,
+                            ),
+                          ),
+                          title: Text(
+                            estacion.nombre,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: esCritico ? Colors.red.shade900 : Colors.black87,
+                            ),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 4),
+                              Text(
+                                "Valor actual: $valorTexto",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: esCritico ? Colors.red.shade700 : Colors.blue.shade700,
+                                ),
+                              ),
+                              Text(
+                                estacion.ubicacion,
+                                style: const TextStyle(color: Colors.black54, fontSize: 13),
+                              ),
+                            ],
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.black45), // Icono del lápiz
+                            onPressed: () => _mostrarDialogoEdicion(estacion), // Abre el modal de edición
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 );
               },
             ),

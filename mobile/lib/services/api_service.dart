@@ -67,4 +67,25 @@ class ApiService {
     
     return response.statusCode == 200;
   }
+  // ========================================================
+  // NUEVA FUNCIÓN PARA EL RETO: OBTENER LECTURAS GLOBAL
+  // ========================================================
+  Future<List<dynamic>> fetchLecturas() async {
+    try {
+      // Hacemos el GET al endpoint exacto que vimos en tu Swagger UI
+      final response = await http.get(Uri.parse('$baseUrl/lecturas/'))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        // Decodificamos la respuesta JSON (que es una lista de lecturas)
+        List<dynamic> jsonResponse = json.decode(response.body);
+        return jsonResponse;
+      } else {
+        return [];
+      }
+    } catch (e) {
+      print("Error al conectar con /lecturas/: $e");
+      return []; // Devolvemos una lista vacía si falla la conexión
+    }
+  }
 }
