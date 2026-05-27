@@ -1,3 +1,4 @@
+import 'dart:async'; // <--- 1. ¡SUPER IMPORTANTE! Importación necesaria para el Timer
 import 'package:flutter/material.dart';
 import 'package:mobile/models/estacion.dart';
 import 'package:mobile/services/api_service.dart';
@@ -14,12 +15,31 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   late Future<List<Estacion>> _futureEstaciones;
-  final ApiService apiService = ApiService(); // Instancia reutilizable para editar/eliminar
+  final ApiService apiService = ApiService(); 
+  Timer? _refreshTimer; // <--- 2. Variable global para controlar el temporizador automático
 
   @override
   void initState() {
     super.initState();
     _refreshEstaciones();
+
+    // 3. ENTRADA EN TIEMPO REAL (AUTOREFRESCO CADA 3 SEGUNDOS)
+    // Esto fuerza a que se vuelvan a pedir las lecturas a FastAPI sin parpadear la pantalla
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (mounted) {
+        setState(() {
+          // Re-ejecuta el build() actualizando los FutureBuilder con datos nuevos de Python
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    // 4. MUY CRÍTICO: Limpiamos el Timer al salir o desarmar la pantalla 
+    // para evitar fugas de memoria importantes.
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   void _refreshEstaciones() {
@@ -29,6 +49,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _logout() async {
+    _refreshTimer?.cancel(); // Cancelamos también al cerrar sesión por seguridad
     await AuthService().logout();
     
     if (!mounted) return;
@@ -40,10 +61,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ==========================================
-  // PASO 3: FUNCIÓN DEL DIÁLOGO DE EDICIÓN
+  // DIÁLOGO DE EDICIÓN (Mantenido intacto)
   // ==========================================
   void _mostrarDialogoEdicion(Estacion estacion) {
-    // Los controladores inician con los valores actuales de la estación
     final nombreCtrl = TextEditingController(text: estacion.nombre);
     final ubicacionCtrl = TextEditingController(text: estacion.ubicacion);
 
@@ -71,7 +91,6 @@ class _HomePageState extends State<HomePage> {
           ),
           ElevatedButton(
             onPressed: () async {
-              // Llamamos al método editarEstacion de tu ApiService
               bool ok = await apiService.editarEstacion(
                 estacion.id, 
                 nombreCtrl.text, 
@@ -80,8 +99,8 @@ class _HomePageState extends State<HomePage> {
               
               if (ok) {
                 if (!context.mounted) return;
-                Navigator.pop(context); // Cierra el diálogo
-                _refreshEstaciones();  // Refresca la lista automáticamente
+                Navigator.pop(context); 
+                _refreshEstaciones();  
                 
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text("Estación actualizada correctamente")),
@@ -93,6 +112,13 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
+  }
+
+  // ======================================================================
+  // FUNCIÓN AUXILIAR: Obtiene las lecturas inyectando el Token en tiempo de ejecución
+  // ======================================================================
+  Future<List<dynamic>> _obtenerLecturasAutenticadas() async {
+    return await apiService.fetchLecturas(); 
   }
 
   @override
@@ -121,44 +147,44 @@ class _HomePageState extends State<HomePage> {
 
           final estaciones = snapshot.data!;
           return RefreshIndicator(
-            onRefresh: () async => _refreshEstaciones(), // Pull-to-refresh
+            onRefresh: () async => _refreshEstaciones(), 
             child: ListView.builder(
               itemCount: estaciones.length,
               itemBuilder: (context, index) {
                 final estacion = estaciones[index];
                 
-                // Usamos un FutureBuilder secundario para obtener las lecturas en tiempo real de esta estación
+                // USAMOS LA FUNCIÓN AUTENTICADA EN EL FUTUREBUILDER
                 return FutureBuilder<List<dynamic>>(
-                   future: apiService.fetchLecturas(), // <--- Llama a la función que acabamos de agregar arriba
-                   builder: (context, lecturaSnapshot) {
+                  future: _obtenerLecturasAutenticadas(), 
+                  builder: (context, lecturaSnapshot) {
                     String valorTexto = "0.0 cm";
-                     bool esCritico = false;
+                    bool esCritico = false;
 
-                     if (lecturaSnapshot.hasData && lecturaSnapshot.data!.isNotEmpty) {
-                          // FILTRADO INTELIGENTE: Buscamos las lecturas que correspondan a ESTA estación
-                       final lecturasDeEstaEstacion = lecturaSnapshot.data!
-                          .where((l) => l['estacion_id'] == estacion.id)
-                          .toList();
+                    if (lecturaSnapshot.hasData && lecturaSnapshot.data!.isNotEmpty) {
+                      // FILTRADO ROBUSTO: Comparación estricta de IDs transformados a String
+                      final lecturasDeEstaEstacion = lecturaSnapshot.data!.where((l) {
+                        final idEstacionLectura = l['estacion_id'] ?? l['estacionId'];
+                        return idEstacionLectura.toString() == estacion.id.toString();
+                      }).toList();
 
-                        if (lecturasDeEstaEstacion.isNotEmpty) {
-                          // Tomamos el último valor (la telemetría más reciente del script de Python)
-                          final ultimaLectura = lecturasDeEstaEstacion.last;
-                          final double valor = double.tryParse(ultimaLectura['valor'].toString()) ?? 0.0;
+                      if (lecturasDeEstaEstacion.isNotEmpty) {
+                        // Tomamos la telemetría más reciente generada por sensor_emitter.py
+                        final ultimaLectura = lecturasDeEstaEstacion.last;
+                        final double valor = double.tryParse(ultimaLectura['valor'].toString()) ?? 0.0;
         
-                            valorTexto = "${valor.toStringAsFixed(1)} cm";
+                        valorTexto = "${valor.toStringAsFixed(1)} cm";
         
-                            // VALIDACIÓN DEL RETO: ¿El nivel del río supera los 70.0 cm?
-                             if (valor > 70.0) {
-                              esCritico = true;
-                            }
-                          }
-                       }
-                    // ==========================================
-                    // PASO 2: SWIPE-TO-DISMISS (DESLIZAR PARA BORRAR)
-                    // ==========================================
+                        // CAMBIO DE COLOR DINÁMICO (SI SUPERA LOS 70.0 CM)
+                        if (valor > 70.0) {
+                          esCritico = true;
+                        }
+                      }
+                    }
+
+                    // SWIPE-TO-DISMISS (DESLIZAR PARA BORRAR)
                     return Dismissible(
                       key: Key(estacion.id.toString()),
-                      direction: DismissDirection.endToStart, // Desliza de derecha a izquierda
+                      direction: DismissDirection.endToStart, 
                       background: Container(
                         color: Colors.red,
                         alignment: Alignment.centerRight,
@@ -180,17 +206,15 @@ class _HomePageState extends State<HomePage> {
                       },
                       child: Card(
                         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                        // RETO SEMANA 9: Si hay peligro, la tarjeta se vuelve de un tono rojo suave
                         color: esCritico ? Colors.red.shade50 : Colors.white,
                         elevation: 2,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         child: ListTile(
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           leading: CircleAvatar(
-                            // RETO SEMANA 9: El círculo cambia a rojo e icono de advertencia ante emergencias
                             backgroundColor: esCritico ? Colors.red.shade100 : Colors.green.shade100,
                             child: Icon(
-                              Icons.wifi_tethering, // Icono de señal inalámbrica ((.))
+                              Icons.wifi_tethering, 
                               color: esCritico ? Colors.red : Colors.green,
                             ),
                           ),
@@ -214,14 +238,14 @@ class _HomePageState extends State<HomePage> {
                                 ),
                               ),
                               Text(
-                                estacion.ubicacion,
+                                    estacion.ubicacion,
                                 style: const TextStyle(color: Colors.black54, fontSize: 13),
                               ),
                             ],
                           ),
                           trailing: IconButton(
-                            icon: const Icon(Icons.edit, color: Colors.black45), // Icono del lápiz
-                            onPressed: () => _mostrarDialogoEdicion(estacion), // Abre el modal de edición
+                            icon: const Icon(Icons.edit, color: Colors.black45), 
+                            onPressed: () => _mostrarDialogoEdicion(estacion), 
                           ),
                         ),
                       ),

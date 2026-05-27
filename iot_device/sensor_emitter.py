@@ -1,46 +1,80 @@
 import requests
 import time
 import random
-# CONFIGURACIÓN
-API_URL = "http://localhost:8000/lecturas/"
-ESTACION_ID = 1 # ID de la estación registrada en la DB
-TOKEN = "TU_TOKEN_JWT_AQUI" # Obtenido del login
+
+BASE_URL = "http://localhost:8000"
+API_URL = f"{BASE_URL}/lecturas/"
+
+def obtener_token_maestro():
+    login_url = f"{BASE_URL}/token" 
+    try:
+        headers = {"accept": "application/json", "Content-Length": "0"}
+        response = requests.post(login_url, headers=headers, timeout=5) 
+        if response.status_code == 200:
+            return response.json().get("access_token")
+        return None
+    except Exception:
+        return None
+
+def obtener_ids_estaciones_dinamico():
+    """Consulta al backend las estaciones reales creadas en el sistema"""
+    url = f"{BASE_URL}/estaciones/"
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            # Extraemos la lista de IDs de la respuesta JSON
+            estaciones = response.json()
+            ids = [estacion["id"] for estacion in estaciones]
+            return ids
+        return []
+    except Exception:
+        return []
 
 def leer_sensor_emulado():
-    # Simulamos una lectura de nivel de río (0 a 100 cm)
     return round(random.uniform(10.5, 85.0), 2)
 
 def enviar_telemetria():
-    print(f"--- Iniciando Emisor IoT para Estación {ESTACION_ID} ---")
+    print("--- Buscando estaciones activas en el sistema... ---")
     
+    token = obtener_token_maestro()
+    if not token:
+        print("[CRÍTICO 🚨] No se pudo obtener el token de autorización.")
+        return
+
     while True:
+        # 🎯 AUTODETECCIÓN: Cada ciclo revisa si agregaste nuevas estaciones desde Flutter
+        lista_estaciones = obtener_ids_estaciones_dinamico()
+        
+        if not lista_estaciones:
+            print("[INFO ⚠️] No se encontraron estaciones creadas en la app. Creando reintento en 5 segundos...")
+            time.sleep(5)
+            continue
+            
+        # Selecciona un ID al azar de las estaciones reales que detectó en tu base de datos
+        estacion_actual = random.choice(lista_estaciones)
         valor = leer_sensor_emulado()
+        
         payload = {
             "valor": valor,
-            "estacion_id": ESTACION_ID
+            "estacion_id": estacion_actual
         }
+        
         headers = {
-            "Authorization": f"Bearer {TOKEN}"
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "accept": "application/json"
         }
-        if valor > 70.0:
-            print(f"[ALERTA] Umbral de inundación superado: {valor} cm")
-
+        
         try:
-            response = requests.post(API_URL, json=payload, headers=headers)
-            if response.status_code == 200:
-                print(f"[OK] Lectura enviada: {valor} cm")
-            else:
-                print(f"[ERROR] Código: {response.status_code}")
+            response = requests.post(API_URL, json=payload, headers=headers, timeout=5)
+            if response.status_code in [200, 201]:
+                print(f"[OK ✅] Estación ID {estacion_actual} -> Registró: {valor} cm")
+            elif response.status_code == 401:
+                token = obtener_token_maestro()
         except Exception as e:
-            print(f"[CRÍTICO] No hay conexión con el servidor: {e}")
+            print(f"[CRÍTICO 🔥] Error de conexión: {e}")
 
-        #/se borró el time.sleep(5) para más dinamismo y se agregó lógica de espera variable   
-        if valor > 70.0:
-            print("[INFO] Modo de Emergencia activado. Próxima lectura en 2 segundos.")
-            time.sleep(2) # Espera 2 segundos si hay alerta 
-        else:
-            print("[INFO] Estado normal. Próxima lectura en 10 segundos.")
-            time.sleep(10) # Espera 10 segundos si todo está bien
+        time.sleep(3)
 
 if __name__ == "__main__":
     enviar_telemetria()

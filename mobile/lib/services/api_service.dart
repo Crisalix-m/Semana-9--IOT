@@ -70,17 +70,26 @@ class ApiService {
   // ========================================================
   // NUEVA FUNCIÓN PARA EL RETO: OBTENER LECTURAS GLOBAL
   // ========================================================
-  Future<List<dynamic>> fetchLecturas() async {
+Future<List<dynamic>> fetchLecturas() async {
     try {
-      // Hacemos el GET al endpoint exacto que vimos en tu Swagger UI
-      final response = await http.get(Uri.parse('$baseUrl/lecturas/'))
-          .timeout(const Duration(seconds: 5));
+      // 1. Recuperamos el token almacenado de forma segura al iniciar sesión
+      final token = await AuthService().getToken();
+
+      // 2. Hacemos el GET inyectando el Bearer token en las cabeceras
+      final response = await http.get(
+        Uri.parse('$baseUrl/lecturas/'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token', // <--- ¡La llave para solucionar el 401!
+        },
+      ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
-        // Decodificamos la respuesta JSON (que es una lista de lecturas)
+        // Decodificamos la respuesta JSON (que ahora sí traerá los datos)
         List<dynamic> jsonResponse = json.decode(response.body);
         return jsonResponse;
       } else {
+        print("El backend rechazó la solicitud. Código de estado: ${response.statusCode}");
         return [];
       }
     } catch (e) {
